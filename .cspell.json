@@ -1,0 +1,36 @@
+{
+  "language": "en",
+  "dictionaries": ["companies", "filetypes", "fullstack", "softwareTerms"],
+  "words": ["LFX", "JWT", "pyproject", "setuptools"],
+  "flagWords": [
+    "abort",
+    "abortion",
+    "blackhat",
+    "black-hat",
+    "whitehat",
+    "white-hat",
+    "cripple",
+    "crippled",
+    "master",
+    "slave",
+    "tribe",
+    "sanity-check",
+    "whitelist",
+    "white-list",
+    "blacklist",
+    "black-list"
+  ],
+  "ignorePaths": [
+    ".cspell.json",
+    "LICENSE",
+    "LICENSE-docs",
+    "megalinter-reports",
+    "styles"
+  ],
+  "languageSettings": [
+    {
+      "languageId": "markdown",
+      "ignoreRegExpList": ["/^\\s*```\\s*(mermaid)[\\s\\S]*?^\\s*```/gm"]
+    }
+  ]
+}
