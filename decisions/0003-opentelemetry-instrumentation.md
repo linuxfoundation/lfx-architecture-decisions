@@ -15,7 +15,7 @@ troubleshooting production issues.
 
 ## Decision
 
-OpenTelemetry tracing MUST be used for all new projects, including propogating
+OpenTelemetry tracing MUST be used for all new projects, including propagating
 trace and parent-span context from both inbound HTTP requests and outbound HTTP
 requests.
 

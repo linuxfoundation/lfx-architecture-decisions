@@ -22,6 +22,7 @@
   ],
   "ignorePaths": [
     ".cspell.json",
+    "CODEOWNERS",
     "LICENSE",
     "LICENSE-docs",
     "megalinter-reports",

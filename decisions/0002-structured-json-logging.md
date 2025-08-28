@@ -34,7 +34,7 @@ service's own database.
 
 Application SHOULD log **warnings** for invalid user request payloads,
 temporary or recoverable network or service disruptions, or unsupported or
-unparseable data from a service provider or database—where the data is not
+unparsable data from a service provider or database—where the data is not
 governed by this service and the parsing is not directly correlated to a
 documented endpoint contract.
 
