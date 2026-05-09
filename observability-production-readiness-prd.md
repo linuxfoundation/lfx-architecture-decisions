@@ -49,6 +49,10 @@ Implemented:
 - Structured Pino logging is implemented in `lfx-v2-ui/apps/lfx-one/src/server/server-logger.ts`.
 - Logs include OpenTelemetry `trace_id` and `span_id` when an active span exists.
 - Sensitive request/response fields are filtered or redacted.
+- The backend service layer uses a shared `LoggerService` in `lfx-v2-ui/apps/lfx-one/src/server/services/logger.service.ts`; 55 service/controller files call `logger.*` for operation, warning, error, and duration-oriented logs.
+- Custom OpenTelemetry client spans exist for NATS requests in `lfx-v2-ui/apps/lfx-one/src/server/services/nats.service.ts`.
+- Custom OpenTelemetry client spans exist for Snowflake query execution in `lfx-v2-ui/apps/lfx-one/src/server/services/snowflake.service.ts`, including DB semantic attributes and returned row counts.
+- The backend service layer routes many LFX API and Query Service calls through `MicroserviceProxyService` and `ApiClientService`, which rely on `fetch`/Undici auto-instrumentation for outbound HTTP spans.
 - Browser Datadog RUM is implemented in `lfx-v2-ui/apps/lfx-one/src/app/shared/providers/datadog-rum.provider.ts`.
 - Runtime config injects Datadog RUM client/application IDs and allowed tracing URLs.
 - `/livez` and `/readyz` endpoints exist in `lfx-v2-ui/apps/lfx-one/src/server/server.ts`.
@@ -59,6 +63,9 @@ Known gaps:
 - `OTEL_EXPORTER_OTLP_ENDPOINT` is not set in default Helm values, so backend tracing is disabled unless production release values inject it.
 - No chart-level default exists for `OTEL_SERVICE_NAME`, `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`, or deployment environment labels.
 - Application metrics are not explicitly exported from the app. The current approach relies mostly on infrastructure metrics and traces.
+- The shared microservice proxy/API client does not add explicit domain-level span names or attributes for LFX API and Query Service calls. Auto-instrumentation should capture HTTP spans, but ops may still see low-semantic route/host spans rather than business operations like `query.resources`, `committee.create`, or `meeting.update`.
+- NATS and Snowflake have custom spans, but there is no comparable explicit span convention for Auth0/CDP, Copilot/AI proxy, Credly, TI, Rewards, or other direct `fetch`-based service clients.
+- Service-layer logs provide durations, warnings, and errors, but no custom metrics counters/histograms are emitted for downstream dependency failures, retries, or saturation.
 - Readiness intentionally does not check lazy dependencies such as NATS or Snowflake. This is valid for SSR availability, but ops still needs separate dependency-health visibility.
 - There is no confirmed dashboard or alert definition in the repo.
 
@@ -176,6 +183,9 @@ Acceptance criteria:
 
 - `lfx-v2-ui` production values set `OTEL_EXPORTER_OTLP_ENDPOINT`.
 - `lfx-v2-ui` production values set service name, environment, version, and sampler.
+- `lfx-v2-ui` verifies existing custom NATS and Snowflake spans in Datadog.
+- `lfx-v2-ui` adds explicit service-layer spans or span attributes for shared `MicroserviceProxyService` / `ApiClientService` calls so Query Service and LFX API dependencies are distinguishable by operation, service, route template, status, and error code.
+- `lfx-v2-ui` reviews direct `fetch` clients, including Auth0/CDP, Copilot/AI proxy, Credly, TI, and Rewards, and adds explicit spans where auto-instrumentation lacks useful business context.
 - `lfx-changelog` either migrates to OpenTelemetry or documents a Datadog-only exception.
 - PCC either migrates to OpenTelemetry or documents a Datadog-only exception for legacy services.
 - Traces reach Datadog in staging and production.
@@ -331,12 +341,16 @@ Deliverables:
 Scope:
 
 - Validate log correlation for `lfx-v2-ui`.
+- Validate backend service-layer spans for existing NATS and Snowflake integrations.
+- Add or standardize explicit service-layer spans for `MicroserviceProxyService` / `ApiClientService` so Query Service and LFX API calls carry useful operation names and attributes beyond raw HTTP auto-instrumentation.
+- Review direct backend `fetch` clients and add explicit spans for high-value dependencies where needed.
 - Enable or replace log injection for `lfx-changelog`.
 - Enable `logInjection` or explicit trace fields in PCC v2 backend.
 
 Deliverables:
 
 - A production request can be followed from RUM to trace to logs.
+- A slow or failing dashboard/API request can be broken down by SSR route, service-layer operation, downstream dependency, and dependency status/error.
 - Sensitive data remains redacted.
 - Correlation fields are documented.
 
@@ -404,6 +418,9 @@ Deliverables:
 - [ ] `lfx-v2-ui` production values set service name, environment, version, and sampler.
 - [ ] `lfx-v2-ui` Datadog RUM runtime config is populated in production.
 - [ ] `lfx-v2-ui` traces and logs correlate in Datadog.
+- [ ] `lfx-v2-ui` NATS and Snowflake service-layer spans are visible in Datadog.
+- [ ] `lfx-v2-ui` Query Service and LFX API calls through `MicroserviceProxyService` / `ApiClientService` have useful service-layer operation names or attributes.
+- [ ] `lfx-v2-ui` direct backend `fetch` clients are reviewed for explicit spans where auto-instrumentation is not enough.
 - [ ] `lfx-changelog` adds `/livez` and `/readyz`.
 - [ ] `lfx-changelog` Helm chart adds startup/liveness/readiness probes.
 - [ ] `lfx-changelog` trace-log correlation is verified.
