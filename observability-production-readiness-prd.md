@@ -37,6 +37,16 @@ Relevant files:
 - `lfx-architecture-decisions/decisions/0002-structured-json-logging.md`
 - `lfx-architecture-decisions/decisions/0003-opentelemetry-instrumentation.md`
 
+### Fact-Finding Snapshot
+
+| Service / repo | Role reviewed | Health endpoints and probes | Tracing found in code | Trace-log correlation | Metrics found in code | Dashboards / alerts / runbooks | Production verification needed |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `lfx-v2-ui` | SSR/BFF and frontend | `/livez`, `/readyz`, Helm probes found | OpenTelemetry server tracing, Undici/HTTP/Express instrumentation, custom NATS and Snowflake spans, Datadog RUM | Pino logs include `trace_id` and `span_id` when active span exists | No explicit app metrics found | Not found in repo | Confirm OTLP endpoint, service tags, sampler, RUM allowed origins, dashboards, alerts |
+| `lfx-v2-query-service` | Go Query API | `/livez`, `/readyz`, Helm probes found | OpenTelemetry SDK, `otelhttp` inbound handler, outbound HTTP/OpenSearch transport instrumentation | `slog` JSON with `slog-otel` trace/span fields | OTEL metrics exporter supported but disabled by default; no custom business metrics found | Not found in repo | Confirm OTLP export enabled, UI-to-Go trace propagation, OpenSearch/FGA visibility, dashboards, alerts |
+| `lfx-v2-committee-service` | Go Committee API | `/livez`, `/readyz`, Helm probes found | OpenTelemetry SDK and `otelhttp` inbound handler | `slog` JSON with `slog-otel` trace/span fields | OTEL metrics exporter supported but disabled by default; no custom business metrics found | Not found in repo | Confirm OTLP export enabled, NATS KV/request/publish visibility, dashboards, alerts |
+| `lfx-v2-meeting-service` | Go Meeting/ITX API | `/livez`, `/readyz`, Helm probes found | OpenTelemetry SDK and `otelhttp` inbound handler | `slog` JSON with `slog-otel` trace/span fields | OTEL metrics exporter supported but disabled by default; no custom business metrics found | Not found in repo | Confirm OTLP export enabled, ITX outbound tracing, NATS event processing visibility, dashboards, alerts |
+| `lfx-changelog` | Changelog API | `/health` found; Helm probes not found | Datadog `dd-trace` found, not OpenTelemetry | Depends on Datadog log injection unless explicit fields are added | Datadog runtime metrics enabled | Not found in repo | Confirm trace-log correlation, split liveness/readiness behavior, probes, dashboards, alerts |
+
 ### `lfx-v2-ui`
 
 Implemented:
