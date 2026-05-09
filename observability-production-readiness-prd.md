@@ -2,7 +2,7 @@
 
 ## Summary
 
-LFX Self Serve has meaningful observability already implemented across the main UI and supporting services, but production readiness is uneven. `lfx-v2-ui` has the most complete implementation with OpenTelemetry tracing, structured Pino logging, Datadog RUM, backend service-layer logging, custom NATS and Snowflake spans, and Kubernetes health probes. `lfx-changelog` has Datadog tracing, structured logging, and an application health endpoint, but lacks chart-level probes and standardized liveness/readiness behavior.
+LFX Self Serve has meaningful observability already implemented across the main UI and supporting services, but production readiness is uneven. `lfx-v2-ui` has the most complete implementation with OpenTelemetry tracing, structured Pino logging, Datadog RUM, backend service-layer logging, custom NATS and Snowflake spans, and Kubernetes health probes. The Go API services behind `LFX_V2_SERVICE` are part of the production backend service layer and must be audited before ops readiness can be claimed. `lfx-changelog` has Datadog tracing, structured logging, and an application health endpoint, but lacks chart-level probes and standardized liveness/readiness behavior.
 
 This PRD defines what exists, what is missing, and what is required for ops to confidently monitor, debug, alert, and support these services in production.
 
@@ -11,14 +11,14 @@ This PRD defines what exists, what is missing, and what is required for ops to c
 - Provide production-grade telemetry for LFX services used by ops, support, and engineering.
 - Ensure every production service exposes reliable health signals for deployment and incident response.
 - Correlate frontend sessions, backend traces, and structured logs across user requests.
-- Standardize observability behavior across `lfx-v2-ui` and `lfx-changelog`.
+- Standardize observability behavior across `lfx-v2-ui`, the Go API service layer, and `lfx-changelog`.
 - Make telemetry configurable through release values and secrets without code changes.
 
 ## Non-Goals
 
 - Replacing Datadog as the production observability backend.
 - Building a custom metrics platform.
-- Assessing applications outside `lfx-v2-ui` and `lfx-changelog`.
+- Assessing unrelated Linux Foundation applications outside LFX Self Serve production paths.
 - Adding product analytics events unrelated to operational health.
 
 ## Current State
@@ -68,6 +68,37 @@ Known gaps:
 - Service-layer logs provide durations, warnings, and errors, but no custom metrics counters/histograms are emitted for downstream dependency failures, retries, or saturation.
 - Readiness intentionally does not check lazy dependencies such as NATS or Snowflake. This is valid for SSR availability, but ops still needs separate dependency-health visibility.
 - There is no confirmed dashboard or alert definition in the repo.
+
+### Go API Services Behind `LFX_V2_SERVICE`
+
+Status:
+
+- The Go API service repos are not checked out in this workspace, so this PRD cannot yet claim code-backed observability findings for them.
+- Local UI and workflow context show that `lfx-v2-ui` proxies production backend requests to `LFX_V2_SERVICE`.
+- Known or likely Go service repos behind these paths include:
+  - `linuxfoundation/lfx-v2-query-service` for `/query/resources`, `/query/resources/count`, and related query endpoints.
+  - `linuxfoundation/lfx-v2-committee-service` for `/committees` and committee-related endpoints.
+  - `linuxfoundation/lfx-v2-meeting-management` for `/itx/meetings` and `/itx/past_meetings`.
+  - Additional service ownership still needs confirmation for `/groupsio`, `/votes`, `/surveys`, `/projects`, and other proxied API paths.
+
+What must be verified:
+
+- Each Go service has an explicit OpenTelemetry or documented Datadog tracing setup.
+- Inbound HTTP requests create server spans with route templates, status codes, errors, service name, environment, and version tags.
+- Trace context propagates from `lfx-v2-ui` through `LFX_V2_SERVICE` into the Go service handlers.
+- Outbound calls from Go services create client spans for OpenSearch, FGA/Authzed, NATS, databases, and service-to-service HTTP calls where applicable.
+- Structured JSON logs include request identifiers and trace correlation fields such as `trace_id`, `span_id`, and Datadog-compatible trace/span fields if required.
+- Health endpoints expose liveness and readiness semantics, either as `/livez` and `/readyz` or as documented equivalents.
+- Helm or deployment manifests wire startup, liveness, and readiness probes.
+- Operational metrics or trace-derived service metrics exist for request rate, error rate, latency, downstream dependency failures, authorization checks, queue or publish failures, and saturation.
+- Dashboards and alerts include the Go API services as first-class production services, not only as opaque downstream calls from the UI.
+
+Known gaps until audited:
+
+- Ops cannot confirm whether traces continue past the UI/BFF boundary into Go service handlers.
+- Ops cannot confirm whether Go service logs can be searched by trace ID.
+- Ops cannot confirm service-specific dependency visibility for OpenSearch, FGA/Authzed, NATS, database calls, or downstream APIs.
+- Ops cannot confirm whether Kubernetes probes and dashboards exist for each Go service.
 
 ### `lfx-changelog`
 
@@ -129,6 +160,7 @@ Every production service must expose:
 Acceptance criteria:
 
 - `lfx-v2-ui` keeps `/livez` and `/readyz`.
+- Go API services expose `/livez` and `/readyz`, or documented equivalents with the same liveness/readiness semantics.
 - `lfx-changelog` adds `/livez` and `/readyz`, while preserving `/health`.
 - Health endpoints are unauthenticated.
 - Health endpoints are excluded from noisy request logs and traces.
@@ -144,6 +176,7 @@ Every Helm/Kubernetes deployment must configure:
 Acceptance criteria:
 
 - `lfx-v2-ui` existing probes are verified in production release values.
+- Go API service Helm or deployment manifests configure startup, liveness, and readiness probes.
 - `lfx-changelog` Helm chart adds configurable startup, liveness, and readiness probes.
 - Probe paths, periods, timeouts, and failure thresholds are configurable per environment.
 
@@ -163,6 +196,8 @@ Acceptance criteria:
 - `lfx-v2-ui` verifies existing custom NATS and Snowflake spans in Datadog.
 - `lfx-v2-ui` adds explicit service-layer spans or span attributes for shared `MicroserviceProxyService` / `ApiClientService` calls so Query Service and LFX API dependencies are distinguishable by operation, service, route template, status, and error code.
 - `lfx-v2-ui` reviews direct `fetch` clients, including Auth0/CDP, Copilot/AI proxy, Credly, TI, and Rewards, and adds explicit spans where auto-instrumentation lacks useful business context.
+- Go API services emit inbound HTTP spans and dependency spans for OpenSearch, FGA/Authzed, NATS, databases, and service-to-service HTTP calls where applicable.
+- Trace context propagates from frontend/RUM to `lfx-v2-ui`, through `LFX_V2_SERVICE`, and into the Go API services.
 - `lfx-changelog` either migrates to OpenTelemetry or documents a Datadog-only exception.
 - Traces reach Datadog in staging and production.
 - Trace sampling is configurable without code changes.
@@ -176,6 +211,7 @@ Acceptance criteria:
 - Logs include `trace_id` and `span_id` where OpenTelemetry is used.
 - Datadog-formatted IDs are included where Datadog correlation requires them.
 - `lfx-v2-ui` validates that log fields appear under production traffic.
+- Go API services validate trace-log correlation fields under production-like traffic.
 - `lfx-changelog` validates Datadog log injection or explicitly adds trace fields.
 - Sensitive headers, cookies, tokens, and secrets remain redacted.
 
@@ -211,6 +247,7 @@ Acceptance criteria:
 
 - Infrastructure metrics are available for every deployment.
 - Datadog APM service metrics are available for traced services.
+- Go API services expose or derive metrics for route latency, route errors, OpenSearch latency/errors, FGA/Authzed latency/errors, NATS publish/request failures, database errors, and service-to-service call failures where applicable.
 - Dependency-specific metrics are represented by traces, health checks, or custom metrics.
 - Any custom app metric uses OpenTelemetry metrics unless an exception is documented.
 
@@ -233,7 +270,7 @@ Minimum dashboard widgets:
 
 Acceptance criteria:
 
-- Dashboards exist for `lfx-v2-ui` and `lfx-changelog`.
+- Dashboards exist for `lfx-v2-ui`, each production Go API service, and `lfx-changelog`.
 - Dashboard links are documented in the deployment runbook.
 - Dashboards show environment and version tags.
 
@@ -310,7 +347,23 @@ Deliverables:
 - `/readyz` has clear dependency semantics.
 - Health endpoints are excluded from noisy logging.
 
-### Phase 3: Trace-Log Correlation Fixes
+### Phase 3: Go API Service Audit
+
+Scope:
+
+- Identify the exact Go repositories behind production `LFX_V2_SERVICE`.
+- Map proxied UI paths to service owners, including `/query/*`, `/committees/*`, `/itx/*`, `/groupsio`, `/votes`, `/surveys`, and `/projects`.
+- Audit each Go service for tracing, structured logs, trace-log correlation, health endpoints, Kubernetes probes, metrics, dashboards, alerts, and runbooks.
+- Verify trace propagation from `lfx-v2-ui` to Go service handlers and downstream dependencies.
+
+Deliverables:
+
+- Code-backed inventory of Go API observability implementation by repo.
+- Gap list by service with required owners and priority.
+- Updated PRD findings replacing the current unaudited status.
+- Staging trace showing frontend/RUM to UI/BFF to Go API to downstream dependency where applicable.
+
+### Phase 4: Trace-Log Correlation Fixes
 
 Scope:
 
@@ -318,6 +371,7 @@ Scope:
 - Validate backend service-layer spans for existing NATS and Snowflake integrations.
 - Add or standardize explicit service-layer spans for `MicroserviceProxyService` / `ApiClientService` so Query Service and LFX API calls carry useful operation names and attributes beyond raw HTTP auto-instrumentation.
 - Review direct backend `fetch` clients and add explicit spans for high-value dependencies where needed.
+- Validate trace-log correlation for Go API services.
 - Enable or replace log injection for `lfx-changelog`.
 
 Deliverables:
@@ -327,7 +381,7 @@ Deliverables:
 - Sensitive data remains redacted.
 - Correlation fields are documented.
 
-### Phase 4: Dashboards, Alerts, and Runbooks
+### Phase 5: Dashboards, Alerts, and Runbooks
 
 Scope:
 
@@ -347,6 +401,9 @@ Deliverables:
 - What is the production Datadog or OTLP endpoint for Kubernetes workloads?
 - Is the preferred production path OTEL Collector sidecar, cluster collector, or Datadog agent?
 - Should `lfx-changelog` migrate from `dd-trace` to OpenTelemetry now, or is a Datadog-only exception acceptable?
+- What exact Go repositories make up production `LFX_V2_SERVICE`?
+- Which repos own `/groupsio`, `/votes`, `/surveys`, `/projects`, `/itx/*`, `/query/*`, and `/committees/*`?
+- Are Go API services behind a shared gateway, and does that gateway preserve `traceparent` and Datadog propagation headers?
 - What SLO targets should apply to each service?
 - Who owns dashboard and monitor creation: app teams, platform, or ops?
 - What session replay privacy level is approved for production?
@@ -356,6 +413,8 @@ Deliverables:
 - Tracing may appear implemented but remain disabled if release values omit `OTEL_EXPORTER_OTLP_ENDPOINT`.
 - Health endpoints that do not check dependencies can show green while feature-specific paths fail.
 - Overly aggressive readiness dependency checks can remove otherwise healthy SSR pods from service.
+- UI/BFF traces may stop at `LFX_V2_SERVICE` if Go API services do not propagate context or emit spans.
+- Without a Go API service audit, the production backend service layer remains an observability blind spot.
 - Session replay and user context require privacy review.
 - 100% sampling may increase Datadog cost for high-traffic routes.
 
@@ -364,6 +423,7 @@ Deliverables:
 - 100% of production services have liveness and readiness probes.
 - 100% of production backend services emit traces to Datadog.
 - 100% of traced backend logs are correlatable by trace ID.
+- 100% of Go API services behind `LFX_V2_SERVICE` have audited observability status and owners.
 - Ops can identify the cause of a synthetic dependency failure within 10 minutes.
 - Frontend RUM sessions can be connected to backend traces for supported origins.
 - All critical alerts link to runbooks.
@@ -377,6 +437,13 @@ Deliverables:
 - [ ] `lfx-v2-ui` NATS and Snowflake service-layer spans are visible in Datadog.
 - [ ] `lfx-v2-ui` Query Service and LFX API calls through `MicroserviceProxyService` / `ApiClientService` have useful service-layer operation names or attributes.
 - [ ] `lfx-v2-ui` direct backend `fetch` clients are reviewed for explicit spans where auto-instrumentation is not enough.
+- [ ] Exact Go API repositories behind `LFX_V2_SERVICE` are identified.
+- [ ] Go API services expose liveness and readiness endpoints.
+- [ ] Go API service deployments wire startup/liveness/readiness probes.
+- [ ] Go API services emit inbound HTTP traces and downstream dependency spans.
+- [ ] Trace context propagates from `lfx-v2-ui` into Go API services.
+- [ ] Go API service logs correlate with traces.
+- [ ] Go API service metrics cover route latency/errors and key downstream dependency failures.
 - [ ] `lfx-changelog` adds `/livez` and `/readyz`.
 - [ ] `lfx-changelog` Helm chart adds startup/liveness/readiness probes.
 - [ ] `lfx-changelog` trace-log correlation is verified.
@@ -391,6 +458,8 @@ Deliverables:
 Treat `lfx-v2-ui` as the reference implementation, but do not mark the overall platform production-ready for ops until release configuration and operational artifacts are complete. The highest-priority fixes are:
 
 1. Enable and verify `lfx-v2-ui` OTLP export in production.
-2. Add Kubernetes probes for `lfx-changelog`.
-3. Verify trace-log correlation across all services.
-4. Create dashboards, alerts, and runbooks.
+2. Identify and audit the Go API services behind `LFX_V2_SERVICE`.
+3. Verify trace propagation from `lfx-v2-ui` into Go API services and downstream dependencies.
+4. Add Kubernetes probes for `lfx-changelog`.
+5. Verify trace-log correlation across all services.
+6. Create dashboards, alerts, and runbooks.
