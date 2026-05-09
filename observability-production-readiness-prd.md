@@ -73,32 +73,38 @@ Known gaps:
 
 Status:
 
-- The Go API service repos are not checked out in this workspace, so this PRD cannot yet claim code-backed observability findings for them.
+- The first Go API service repos have now been checked out locally and reviewed for observability scaffolding.
 - Local UI and workflow context show that `lfx-v2-ui` proxies production backend requests to `LFX_V2_SERVICE`.
-- Known or likely Go service repos behind these paths include:
+- Checked repos include:
   - `linuxfoundation/lfx-v2-query-service` for `/query/resources`, `/query/resources/count`, and related query endpoints.
   - `linuxfoundation/lfx-v2-committee-service` for `/committees` and committee-related endpoints.
-  - `linuxfoundation/lfx-v2-meeting-management` for `/itx/meetings` and `/itx/past_meetings`.
-  - Additional service ownership still needs confirmation for `/groupsio`, `/votes`, `/surveys`, `/projects`, and other proxied API paths.
+  - `linuxfoundation/lfx-v2-meeting-service` for `/itx/meetings`, `/itx/past_meetings`, and related meeting endpoints.
+- Additional service ownership still needs confirmation for `/groupsio`, `/votes`, `/surveys`, `/projects`, and other proxied API paths.
 
-What must be verified:
+Implemented:
 
-- Each Go service has an explicit OpenTelemetry or documented Datadog tracing setup.
-- Inbound HTTP requests create server spans with route templates, status codes, errors, service name, environment, and version tags.
-- Trace context propagates from `lfx-v2-ui` through `LFX_V2_SERVICE` into the Go service handlers.
-- Outbound calls from Go services create client spans for OpenSearch, FGA/Authzed, NATS, databases, and service-to-service HTTP calls where applicable.
-- Structured JSON logs include request identifiers and trace correlation fields such as `trace_id`, `span_id`, and Datadog-compatible trace/span fields if required.
-- Health endpoints expose liveness and readiness semantics, either as `/livez` and `/readyz` or as documented equivalents.
-- Helm or deployment manifests wire startup, liveness, and readiness probes.
-- Operational metrics or trace-derived service metrics exist for request rate, error rate, latency, downstream dependency failures, authorization checks, queue or publish failures, and saturation.
-- Dashboards and alerts include the Go API services as first-class production services, not only as opaque downstream calls from the UI.
+- All three reviewed Go services bootstrap OpenTelemetry SDK configuration from environment in startup code.
+- All three services wrap their HTTP server handlers with `otelhttp.NewHandler` and exclude `/livez` and `/readyz` from trace noise.
+- All three services expose `/livez` and `/readyz` in the Goa design/generated server layer.
+- All three Helm charts configure startup, liveness, and readiness probes against `/readyz` and `/livez`.
+- All three services use structured `slog` JSON logging.
+- All three services wrap the log handler with `slog-otel`, which adds `trace_id` and `span_id` when logs are emitted with a traced context.
+- `lfx-v2-query-service` wraps outbound generic HTTP calls and OpenSearch HTTP transport with `otelhttp.NewTransport`.
+- `lfx-v2-query-service` readiness checks the resource search service, which covers OpenSearch readiness.
+- `lfx-v2-committee-service` readiness checks NATS-backed storage readiness.
+- `lfx-v2-meeting-service` readiness currently reports OK because the ITX proxy path is stateless at readiness time.
 
-Known gaps until audited:
+Known gaps:
 
-- Ops cannot confirm whether traces continue past the UI/BFF boundary into Go service handlers.
-- Ops cannot confirm whether Go service logs can be searched by trace ID.
-- Ops cannot confirm service-specific dependency visibility for OpenSearch, FGA/Authzed, NATS, database calls, or downstream APIs.
-- Ops cannot confirm whether Kubernetes probes and dashboards exist for each Go service.
+- The default Helm values set OTEL export to disabled: `tracesExporter: "none"`, `metricsExporter: "none"`, and empty OTLP endpoint values. Production release values must explicitly enable OTLP export.
+- No Datadog dashboard, monitor, SLO, or runbook definitions were found in these repos.
+- No custom application metrics counters or histograms were found for route-level business operations, NATS publish/request failures, OpenSearch failures, FGA/Authzed checks, ITX proxy failures, queue processing, or saturation.
+- `lfx-v2-query-service` has HTTP and OpenSearch transport instrumentation, but no explicit custom spans were found for business operations such as resource query, organization query, FGA tuple reads, or access checks.
+- `lfx-v2-committee-service` has inbound HTTP tracing, but no explicit custom spans or instrumented NATS transport were found for NATS KV, request/reply, publisher, or stream consumer operations.
+- `lfx-v2-meeting-service` has inbound HTTP tracing, but no explicit custom spans were found for ITX proxy operations, NATS event processing, NATS ID mapping, or event publishing.
+- `lfx-v2-meeting-service` builds many outbound ITX HTTP requests, but no `otelhttp.NewTransport` was found for that proxy client, so outbound ITX client spans may be missing.
+- Trace propagation from `lfx-v2-ui` through `LFX_V2_SERVICE` into these Go handlers has not yet been verified with a staging trace.
+- Datadog-compatible `dd.trace_id` and `dd.span_id` fields are not explicitly added; compatibility depends on Datadog/OpenTelemetry ingestion behavior unless production log processing maps the existing `trace_id` and `span_id` fields.
 
 ### `lfx-changelog`
 
