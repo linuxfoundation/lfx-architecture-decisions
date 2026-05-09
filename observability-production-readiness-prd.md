@@ -2,7 +2,7 @@
 
 ## Summary
 
-LFX Self Serve has meaningful observability already implemented across the main UI and supporting services, but production readiness is uneven. `lfx-v2-ui` has the most complete implementation with OpenTelemetry tracing, structured Pino logging, Datadog RUM, and Kubernetes health probes. `lfx-changelog` has Datadog tracing, structured logging, and an application health endpoint, but lacks chart-level probes. `lfx-pcc` has Datadog tracing and RUM in legacy/current surfaces, but trace-log correlation and standardized readiness behavior are incomplete.
+LFX Self Serve has meaningful observability already implemented across the main UI and supporting services, but production readiness is uneven. `lfx-v2-ui` has the most complete implementation with OpenTelemetry tracing, structured Pino logging, Datadog RUM, backend service-layer logging, custom NATS and Snowflake spans, and Kubernetes health probes. `lfx-changelog` has Datadog tracing, structured logging, and an application health endpoint, but lacks chart-level probes and standardized liveness/readiness behavior.
 
 This PRD defines what exists, what is missing, and what is required for ops to confidently monitor, debug, alert, and support these services in production.
 
@@ -11,14 +11,14 @@ This PRD defines what exists, what is missing, and what is required for ops to c
 - Provide production-grade telemetry for LFX services used by ops, support, and engineering.
 - Ensure every production service exposes reliable health signals for deployment and incident response.
 - Correlate frontend sessions, backend traces, and structured logs across user requests.
-- Standardize observability behavior across `lfx-v2-ui`, `lfx-changelog`, and `lfx-pcc`.
+- Standardize observability behavior across `lfx-v2-ui` and `lfx-changelog`.
 - Make telemetry configurable through release values and secrets without code changes.
 
 ## Non-Goals
 
 - Replacing Datadog as the production observability backend.
 - Building a custom metrics platform.
-- Rewriting legacy PCC observability end to end in this phase.
+- Assessing applications outside `lfx-v2-ui` and `lfx-changelog`.
 - Adding product analytics events unrelated to operational health.
 
 ## Current State
@@ -88,27 +88,6 @@ Known gaps:
 - `/health` combines process health with OpenSearch status but there is no separate `/livez` and `/readyz`.
 - No visible dashboard, monitor, SLO, or alert configuration exists in the repo.
 
-### `lfx-pcc`
-
-Implemented:
-
-- v2 backend imports Datadog tracing in `lfx-pcc/apps/v2-backend/src/main.ts`.
-- v2 backend initializes `dd-trace` in `lfx-pcc/apps/v2-backend/src/core/helpers/tracer.ts`.
-- v2 backend uses `nestjs-pino` logging in `lfx-pcc/apps/v2-backend/src/app.module.ts`.
-- v2 backend exposes a health endpoint through `lfx-pcc/apps/v2-backend/src/app.controller.ts`.
-- v2 frontend initializes Datadog RUM in `lfx-pcc/apps/v2-frontend/src/app/app.component.ts`.
-- v1 backend imports Datadog tracing in `lfx-pcc/apps/v1-backend/src/index.ts`.
-- v1 backend has `/api/health`.
-
-Known gaps:
-
-- v2 backend has `logInjection: false`, preventing automatic Datadog trace-log correlation.
-- PCC logging configuration is not aligned with the structured logging ADR in all services.
-- Health endpoints are basic and do not clearly distinguish liveness from readiness.
-- No OpenTelemetry implementation is visible for PCC services.
-- No app-level metrics endpoint or OpenTelemetry metrics export is visible.
-- No repo-visible Kubernetes probe configuration was found for PCC in this workspace.
-
 ## User Personas
 
 ### Ops Engineer
@@ -151,7 +130,6 @@ Acceptance criteria:
 
 - `lfx-v2-ui` keeps `/livez` and `/readyz`.
 - `lfx-changelog` adds `/livez` and `/readyz`, while preserving `/health`.
-- PCC v1/v2 services either add `/livez` and `/readyz` or document equivalent paths.
 - Health endpoints are unauthenticated.
 - Health endpoints are excluded from noisy request logs and traces.
 
@@ -167,7 +145,6 @@ Acceptance criteria:
 
 - `lfx-v2-ui` existing probes are verified in production release values.
 - `lfx-changelog` Helm chart adds configurable startup, liveness, and readiness probes.
-- PCC deployment manifests include equivalent probes.
 - Probe paths, periods, timeouts, and failure thresholds are configurable per environment.
 
 ### R3: Distributed Tracing
@@ -187,7 +164,6 @@ Acceptance criteria:
 - `lfx-v2-ui` adds explicit service-layer spans or span attributes for shared `MicroserviceProxyService` / `ApiClientService` calls so Query Service and LFX API dependencies are distinguishable by operation, service, route template, status, and error code.
 - `lfx-v2-ui` reviews direct `fetch` clients, including Auth0/CDP, Copilot/AI proxy, Credly, TI, and Rewards, and adds explicit spans where auto-instrumentation lacks useful business context.
 - `lfx-changelog` either migrates to OpenTelemetry or documents a Datadog-only exception.
-- PCC either migrates to OpenTelemetry or documents a Datadog-only exception for legacy services.
 - Traces reach Datadog in staging and production.
 - Trace sampling is configurable without code changes.
 
@@ -201,7 +177,6 @@ Acceptance criteria:
 - Datadog-formatted IDs are included where Datadog correlation requires them.
 - `lfx-v2-ui` validates that log fields appear under production traffic.
 - `lfx-changelog` validates Datadog log injection or explicitly adds trace fields.
-- PCC v2 enables `logInjection` or explicitly adds trace fields.
 - Sensitive headers, cookies, tokens, and secrets remain redacted.
 
 ### R5: Frontend Real User Monitoring
@@ -218,7 +193,6 @@ Frontend apps must capture:
 Acceptance criteria:
 
 - `lfx-v2-ui` Datadog RUM is configured through runtime env, not hardcoded secrets.
-- `lfx-pcc` frontend RUM configuration is reviewed for hardcoded client/application IDs and moved to runtime/environment config if needed.
 - RUM allowed tracing URLs match production frontend/backend origins.
 - Session replay privacy level is reviewed and approved for production.
 
@@ -259,7 +233,7 @@ Minimum dashboard widgets:
 
 Acceptance criteria:
 
-- Dashboards exist for `lfx-v2-ui`, `lfx-changelog`, and PCC services.
+- Dashboards exist for `lfx-v2-ui` and `lfx-changelog`.
 - Dashboard links are documented in the deployment runbook.
 - Dashboards show environment and version tags.
 
@@ -345,7 +319,6 @@ Scope:
 - Add or standardize explicit service-layer spans for `MicroserviceProxyService` / `ApiClientService` so Query Service and LFX API calls carry useful operation names and attributes beyond raw HTTP auto-instrumentation.
 - Review direct backend `fetch` clients and add explicit spans for high-value dependencies where needed.
 - Enable or replace log injection for `lfx-changelog`.
-- Enable `logInjection` or explicit trace fields in PCC v2 backend.
 
 Deliverables:
 
@@ -354,22 +327,7 @@ Deliverables:
 - Sensitive data remains redacted.
 - Correlation fields are documented.
 
-### Phase 4: PCC Modernization
-
-Scope:
-
-- Standardize PCC health endpoints.
-- Add or verify deployment probes.
-- Decide whether PCC services remain on Datadog tracing or migrate to OpenTelemetry.
-- Align logging with the structured JSON ADR.
-
-Deliverables:
-
-- PCC readiness/liveness behavior documented.
-- PCC services have trace-log correlation.
-- PCC services have dashboards and alerts.
-
-### Phase 5: Dashboards, Alerts, and Runbooks
+### Phase 4: Dashboards, Alerts, and Runbooks
 
 Scope:
 
@@ -389,7 +347,6 @@ Deliverables:
 - What is the production Datadog or OTLP endpoint for Kubernetes workloads?
 - Is the preferred production path OTEL Collector sidecar, cluster collector, or Datadog agent?
 - Should `lfx-changelog` migrate from `dd-trace` to OpenTelemetry now, or is a Datadog-only exception acceptable?
-- Should PCC legacy services be brought to the new OpenTelemetry standard, or only stabilized with Datadog correlation?
 - What SLO targets should apply to each service?
 - Who owns dashboard and monitor creation: app teams, platform, or ops?
 - What session replay privacy level is approved for production?
@@ -401,7 +358,6 @@ Deliverables:
 - Overly aggressive readiness dependency checks can remove otherwise healthy SSR pods from service.
 - Session replay and user context require privacy review.
 - 100% sampling may increase Datadog cost for high-traffic routes.
-- Legacy PCC observability may remain inconsistent without a dedicated modernization phase.
 
 ## Success Metrics
 
@@ -424,9 +380,6 @@ Deliverables:
 - [ ] `lfx-changelog` adds `/livez` and `/readyz`.
 - [ ] `lfx-changelog` Helm chart adds startup/liveness/readiness probes.
 - [ ] `lfx-changelog` trace-log correlation is verified.
-- [ ] PCC v2 backend enables trace-log correlation.
-- [ ] PCC services expose standardized health endpoints or documented equivalents.
-- [ ] PCC deployments have liveness/readiness probes.
 - [ ] Dashboards exist for all production services.
 - [ ] Alerts exist for availability, error rate, latency, restarts, and dependency failure.
 - [ ] Runbooks are linked from alerts.
@@ -441,4 +394,3 @@ Treat `lfx-v2-ui` as the reference implementation, but do not mark the overall p
 2. Add Kubernetes probes for `lfx-changelog`.
 3. Verify trace-log correlation across all services.
 4. Create dashboards, alerts, and runbooks.
-5. Standardize PCC health and correlation behavior.
