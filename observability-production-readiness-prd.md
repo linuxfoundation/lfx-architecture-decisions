@@ -2,7 +2,7 @@
 
 ## Summary
 
-LFX Self Serve has meaningful observability already implemented across the main UI and supporting services, but production readiness is uneven. `lfx-v2-ui` has the most complete implementation with OpenTelemetry tracing, structured Pino logging, Datadog RUM, backend service-layer logging, custom NATS and Snowflake spans, and Kubernetes health probes. The Go API services behind `LFX_V2_SERVICE` are part of the production backend service layer and must be audited before ops readiness can be claimed. `lfx-changelog` has Datadog tracing, structured logging, and an application health endpoint, but lacks chart-level probes and standardized liveness/readiness behavior.
+LFX Self Serve has meaningful observability already implemented across the main UI and supporting services, but production readiness is uneven. `lfx-v2-ui` has the most complete implementation with OpenTelemetry tracing, structured Pino logging, Datadog RUM, backend service-layer logging, custom NATS and Snowflake spans, and Kubernetes health probes. The Go API services behind `LFX_V2_SERVICE` are part of the production backend service layer and must be included in ops readiness decisions. `lfx-v2-query-service`, `lfx-v2-committee-service`, and `lfx-v2-meeting-service` have OpenTelemetry scaffolding and probes, while `lfx-v2-survey-service` has health/probe/logging support but lacks active tracing setup in the application entrypoint. Jira production verification for `LFXV2-1728` also reports that `lfx-v2-voting-service` and `lfx-v2-survey-service` have zero Datadog APM traces, and that cross-service propagation from RUM/UI into Go APIs is currently broken. `lfx-changelog` has Datadog tracing, structured logging, and an application health endpoint, but lacks chart-level probes and standardized liveness/readiness behavior.
 
 This PRD defines what exists, what is missing, and what is required for ops to confidently monitor, debug, alert, and support these services in production.
 
@@ -45,7 +45,25 @@ Relevant files:
 | `lfx-v2-query-service` | Go Query API | `/livez`, `/readyz`, Helm probes found | OpenTelemetry SDK, `otelhttp` inbound handler, outbound HTTP/OpenSearch transport instrumentation | `slog` JSON with `slog-otel` trace/span fields | OTEL metrics exporter supported but disabled by default; no custom business metrics found | Not found in repo | Confirm OTLP export enabled, UI-to-Go trace propagation, OpenSearch/FGA visibility, dashboards, alerts |
 | `lfx-v2-committee-service` | Go Committee API | `/livez`, `/readyz`, Helm probes found | OpenTelemetry SDK and `otelhttp` inbound handler | `slog` JSON with `slog-otel` trace/span fields | OTEL metrics exporter supported but disabled by default; no custom business metrics found | Not found in repo | Confirm OTLP export enabled, NATS KV/request/publish visibility, dashboards, alerts |
 | `lfx-v2-meeting-service` | Go Meeting/ITX API | `/livez`, `/readyz`, Helm probes found | OpenTelemetry SDK and `otelhttp` inbound handler | `slog` JSON with `slog-otel` trace/span fields | OTEL metrics exporter supported but disabled by default; no custom business metrics found | Not found in repo | Confirm OTLP export enabled, ITX outbound tracing, NATS event processing visibility, dashboards, alerts |
+| `lfx-v2-survey-service` | Go Survey API | `/health`, `/livez`, `/readyz`, Helm probes found | OpenTelemetry dependencies and Helm env placeholders found, but no SDK initialization or `otelhttp` server wrapper found in `cmd/survey-api/main.go` | `slog` JSON with `slog-otel` handler present, but correlation depends on traced request context that is currently missing | OTEL dependencies present but no active metrics exporter setup or custom business metrics found | Not found in repo | Add active tracing setup, verify Datadog APM service visibility, add outbound HTTP/NATS spans, dashboards, alerts |
+| `lfx-v2-voting-service` | Go Voting API | Pending local repo inspection | Jira production verification reports zero Datadog APM traces | Pending local repo inspection | Pending local repo inspection | Pending local repo inspection | Locate/audit repo, add active tracing if missing, verify Datadog APM service visibility |
 | `lfx-changelog` | Changelog API | `/health` found; Helm probes not found | Datadog `dd-trace` found, not OpenTelemetry | Depends on Datadog log injection unless explicit fields are added | Datadog runtime metrics enabled | Not found in repo | Confirm trace-log correlation, split liveness/readiness behavior, probes, dashboards, alerts |
+
+### Production-Verified Requirement Status
+
+This table incorporates the `LFXV2-1728` Jira comment titled "Observability PRD: Requirements Status (as of 2026-05-11)", which was reported as verified against Datadog production data, latest main branches, and `lfx-v2-argocd`.
+
+| Requirement | Status | Production/Jira finding | Related follow-up |
+| --- | --- | --- | --- |
+| R1: Standard Service Health Endpoints | Mostly done | `lfx-v2-ui` and reviewed Go services expose liveness/readiness endpoints; `lfx-changelog` is missing `/livez` and `/readyz` | `LFXV2-1741` |
+| R2: Kubernetes Probe Wiring | Mostly done | Reviewed UI and Go charts have probes; `lfx-changelog` has no Helm probes | `LFXV2-1741` |
+| R3: Distributed Tracing | Partial / critical gaps | RUM reaches `lfx-v2-ui`, but Go API spans start new traces instead of continuing UI traces; `lfx-v2-survey-service` and `lfx-v2-voting-service` have zero Datadog APM traces; outbound HTTP and NATS spans are incomplete; intermittent OTLP export failures were reported | `LFXV2-1734`, `LFXV2-1735`, `LFXV2-1736`, `LFXV2-1737`, `LFXV2-1739`, `LFXV2-1742`, `LFXV2-1743`, `LFXV2-1744` |
+| R4: Trace and Log Correlation | Mostly done | Verified for `lfx-v2-ui`, `lfx-v2-query-service`, and `lfx-v2-committee-service`; `lfx-changelog` correlation is broken or incomplete | `LFXV2-1738` |
+| R5: Frontend Real User Monitoring | Done | Datadog RUM is configured through runtime env and verified in Datadog | None |
+| R6: Operational Metrics | Not done | No custom application metrics are exported from any reviewed service; Go services have metrics exporter disabled in default values | `LFXV2-1745` |
+| R7: Dashboards | Not done | No dashboard definitions were found in the reviewed repos | `LFXV2-1747` |
+| R8: Alerts and SLOs | Not done | No monitor, alert, or SLO definitions were found in the reviewed repos | `LFXV2-1748` |
+| R9: Runbooks | Not done | No production observability runbooks were found in the reviewed repos | `LFXV2-1749` |
 
 ### `lfx-v2-ui`
 
@@ -89,7 +107,9 @@ Status:
   - `linuxfoundation/lfx-v2-query-service` for `/query/resources`, `/query/resources/count`, and related query endpoints.
   - `linuxfoundation/lfx-v2-committee-service` for `/committees` and committee-related endpoints.
   - `linuxfoundation/lfx-v2-meeting-service` for `/itx/meetings`, `/itx/past_meetings`, and related meeting endpoints.
-- Additional service ownership still needs confirmation for `/groupsio`, `/votes`, `/surveys`, `/projects`, and other proxied API paths.
+  - `linuxfoundation/lfx-v2-survey-service` for survey-related API and event processing paths.
+- Jira production verification for `LFXV2-1728` identifies `lfx-v2-voting-service` as part of the required coverage and reports zero traces for it, but the repo was not present in the local workspace at the time of this update.
+- Additional service ownership still needs confirmation for `/groupsio`, `/projects`, and other proxied API paths.
 
 Implemented:
 
@@ -107,13 +127,17 @@ Implemented:
 Known gaps:
 
 - The default Helm values set OTEL export to disabled: `tracesExporter: "none"`, `metricsExporter: "none"`, and empty OTLP endpoint values. Production release values must explicitly enable OTLP export.
+- Jira production verification reports that cross-service trace propagation is broken: RUM traces flow into `lfx-v2-ui`, but Go API spans have `parentid: 0` and start new traces instead of continuing the frontend/UI trace.
+- Jira production verification reports that `lfx-v2-survey-service` and `lfx-v2-voting-service` have zero Datadog APM traces.
 - No Datadog dashboard, monitor, SLO, or runbook definitions were found in these repos.
 - No custom application metrics counters or histograms were found for route-level business operations, NATS publish/request failures, OpenSearch failures, FGA/Authzed checks, ITX proxy failures, queue processing, or saturation.
 - `lfx-v2-query-service` has HTTP and OpenSearch transport instrumentation, but no explicit custom spans were found for business operations such as resource query, organization query, FGA tuple reads, or access checks.
 - `lfx-v2-committee-service` has inbound HTTP tracing, but no explicit custom spans or instrumented NATS transport were found for NATS KV, request/reply, publisher, or stream consumer operations.
 - `lfx-v2-meeting-service` has inbound HTTP tracing, but no explicit custom spans were found for ITX proxy operations, NATS event processing, NATS ID mapping, or event publishing.
 - `lfx-v2-meeting-service` builds many outbound ITX HTTP requests, but no `otelhttp.NewTransport` was found for that proxy client, so outbound ITX client spans may be missing.
-- Trace propagation from `lfx-v2-ui` through `LFX_V2_SERVICE` into these Go handlers has not yet been verified with a staging trace.
+- `lfx-v2-survey-service` has OpenTelemetry dependencies and commented Helm env placeholders, but no active SDK setup or `otelhttp.NewHandler` wrapping was found in `cmd/survey-api/main.go`.
+- `lfx-v2-survey-service` has NATS event processing, NATS publishing, ID mapping, and outbound proxy HTTP paths without confirmed spans.
+- `lfx-v2-voting-service` still needs local code inspection to confirm whether the Jira-reported zero-trace state is caused by missing SDK initialization, missing deployment config, or another runtime issue.
 - Datadog-compatible `dd.trace_id` and `dd.span_id` fields are not explicitly added; compatibility depends on Datadog/OpenTelemetry ingestion behavior unless production log processing maps the existing `trace_id` and `span_id` fields.
 
 ### `lfx-changelog`
@@ -214,6 +238,7 @@ Acceptance criteria:
 - `lfx-v2-ui` reviews direct `fetch` clients, including Auth0/CDP, Copilot/AI proxy, Credly, TI, and Rewards, and adds explicit spans where auto-instrumentation lacks useful business context.
 - Go API services emit inbound HTTP spans and dependency spans for OpenSearch, FGA/Authzed, NATS, databases, and service-to-service HTTP calls where applicable.
 - Trace context propagates from frontend/RUM to `lfx-v2-ui`, through `LFX_V2_SERVICE`, and into the Go API services.
+- `lfx-v2-survey-service` and `lfx-v2-voting-service` appear as Datadog APM services under production traffic.
 - `lfx-changelog` either migrates to OpenTelemetry or documents a Datadog-only exception.
 - Traces reach Datadog in staging and production.
 - Trace sampling is configurable without code changes.
@@ -368,7 +393,7 @@ Deliverables:
 Scope:
 
 - Identify the exact Go repositories behind production `LFX_V2_SERVICE`.
-- Map proxied UI paths to service owners, including `/query/*`, `/committees/*`, `/itx/*`, `/groupsio`, `/votes`, `/surveys`, and `/projects`.
+- Map proxied UI paths to service owners, including `/query/*`, `/committees/*`, `/itx/*`, `/surveys`, `/votes`, `/groupsio`, and `/projects`.
 - Audit each Go service for tracing, structured logs, trace-log correlation, health endpoints, Kubernetes probes, metrics, dashboards, alerts, and runbooks.
 - Verify trace propagation from `lfx-v2-ui` to Go service handlers and downstream dependencies.
 
@@ -418,7 +443,7 @@ Deliverables:
 - Is the preferred production path OTEL Collector sidecar, cluster collector, or Datadog agent?
 - Should `lfx-changelog` migrate from `dd-trace` to OpenTelemetry now, or is a Datadog-only exception acceptable?
 - What exact Go repositories make up production `LFX_V2_SERVICE`?
-- Which repos own `/groupsio`, `/votes`, `/surveys`, `/projects`, `/itx/*`, `/query/*`, and `/committees/*`?
+- Which repos own `/groupsio`, `/projects`, and other proxied API paths not yet mapped?
 - Are Go API services behind a shared gateway, and does that gateway preserve `traceparent` and Datadog propagation headers?
 - What SLO targets should apply to each service?
 - Who owns dashboard and monitor creation: app teams, platform, or ops?
@@ -430,7 +455,8 @@ Deliverables:
 - Health endpoints that do not check dependencies can show green while feature-specific paths fail.
 - Overly aggressive readiness dependency checks can remove otherwise healthy SSR pods from service.
 - UI/BFF traces may stop at `LFX_V2_SERVICE` if Go API services do not propagate context or emit spans.
-- Without a Go API service audit, the production backend service layer remains an observability blind spot.
+- Jira production verification already shows trace continuity stops at the Go API boundary for some flows, which prevents ops from following a user request end to end.
+- Until `lfx-v2-voting-service` is locally inspected and `lfx-v2-survey-service` tracing is activated, the production backend service layer remains partially invisible in APM.
 - Session replay and user context require privacy review.
 - 100% sampling may increase Datadog cost for high-traffic routes.
 
@@ -458,6 +484,9 @@ Deliverables:
 - [ ] Go API service deployments wire startup/liveness/readiness probes.
 - [ ] Go API services emit inbound HTTP traces and downstream dependency spans.
 - [ ] Trace context propagates from `lfx-v2-ui` into Go API services.
+- [ ] `lfx-v2-survey-service` initializes OpenTelemetry SDK and wraps the HTTP handler with `otelhttp`.
+- [ ] `lfx-v2-voting-service` repo is checked out and audited for health, probes, tracing, logs, metrics, dashboards, alerts, and runbooks.
+- [ ] `lfx-v2-survey-service` and `lfx-v2-voting-service` appear in Datadog APM under production traffic.
 - [ ] Go API service logs correlate with traces.
 - [ ] Go API service metrics cover route latency/errors and key downstream dependency failures.
 - [ ] `lfx-changelog` adds `/livez` and `/readyz`.
@@ -474,8 +503,9 @@ Deliverables:
 Treat `lfx-v2-ui` as the reference implementation, but do not mark the overall platform production-ready for ops until release configuration and operational artifacts are complete. The highest-priority fixes are:
 
 1. Enable and verify `lfx-v2-ui` OTLP export in production.
-2. Identify and audit the Go API services behind `LFX_V2_SERVICE`.
-3. Verify trace propagation from `lfx-v2-ui` into Go API services and downstream dependencies.
-4. Add Kubernetes probes for `lfx-changelog`.
-5. Verify trace-log correlation across all services.
-6. Create dashboards, alerts, and runbooks.
+2. Fix cross-service trace propagation from RUM/UI through `lfx-v2-ui` into Go API services.
+3. Activate and verify tracing for `lfx-v2-survey-service` and `lfx-v2-voting-service`.
+4. Complete local inspection of `lfx-v2-voting-service` and any remaining production Go services behind `LFX_V2_SERVICE`.
+5. Add Kubernetes probes for `lfx-changelog`.
+6. Verify trace-log correlation across all services.
+7. Create dashboards, alerts, and runbooks.
